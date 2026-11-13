@@ -47,7 +47,16 @@
     position: absolute; right: 12px; bottom: 12px; flex: none; padding: 6px 12px;
     font-size: .85rem; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; border: none;
   }
-  video { display: none; }
+  /* El video de la cámara no se muestra (se dibuja en el lienzo), pero NO
+     puede llevar display:none: en iPhone un video oculto así deja de recibir
+     imágenes. Lo dejamos de 1 px y transparente. */
+  video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #activar {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    flex: none; padding: 14px 22px; font-size: 1.05rem; border-radius: 999px;
+    background: var(--acento); color: #fff; border: none;
+  }
+  #activar[hidden] { display: none; }
   #estado {
     position: absolute; left: 12px; bottom: 12px; padding: 4px 10px;
     border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: .85rem;
@@ -87,7 +96,9 @@
 </header>
 <main>
   <section class="tarjeta camara">
-    <video id="video" playsinline></video>
+    <!-- muted + playsinline + autoplay: necesarios para que iPhone reproduzca la cámara dentro de la página -->
+    <video id="video" playsinline muted autoplay></video>
+    <button id="activar" type="button" hidden>Activar cámara</button>
     <canvas id="lienzo" width="640" height="480" aria-label="Cámara con los puntos de la mano"></canvas>
     <div id="estado">Iniciando cámara…</div>
     <button id="cambiarCamara" type="button">Cambiar cámara</button>
@@ -283,45 +294,85 @@ manos.setOptions({
   minTrackingConfidence: 0.5,
 });
 
+// Últimos puntos detectados, para dibujarlos sobre el video.
+let ultimaMano = null;
+let detectorListo = false;
+
 manos.onResults((res) => {
-  const ancho = res.image.width, alto = res.image.height;
-  if (lienzo.width !== ancho) { lienzo.width = ancho; lienzo.height = alto; }
-
-  // Con la cámara frontal dibujamos en espejo, como un espejo real. La
-  // trasera se muestra tal cual. Los puntos que se envían NO se reflejan:
-  // el modelo se entrenó con ambas manos.
-  ctx.save();
-  if (camaraFrontal) { ctx.translate(ancho, 0); ctx.scale(-1, 1); }
-  ctx.drawImage(res.image, 0, 0, ancho, alto);
+  if (!detectorListo) detectorListo = true;
   const lm = res.multiHandLandmarks && res.multiHandLandmarks[0];
-  if (lm) {
-    drawConnectors(ctx, lm, HAND_CONNECTIONS, { color: "#4c8dff", lineWidth: 3 });
-    drawLandmarks(ctx, lm, { color: "#ffffff", fillColor: "#1a7f37", lineWidth: 1, radius: 4 });
-  }
-  ctx.restore();
-
+  ultimaMano = lm || null;
   if (!lm) {
     elEstado.textContent = "Muestra la mano a la cámara";
     mostrarPrediccion(null);
     return;
   }
   if (!enviando && performance.now() - ultimoEnvio >= INTERVALO_ENVIO_MS) {
-    consultar(lm, ancho, alto);
+    consultar(lm, res.image.width, res.image.height);
   }
 });
 
-// Abrimos la cámara con la API estándar del navegador. Funciona en
-// http://127.0.0.1 o localhost porque el navegador los considera seguros.
+// ---------------------------------------------------------------------------
+// Dibujo: la imagen de la cámara se pinta SIEMPRE, aunque el detector de
+// manos todavía esté cargando o haya fallado. Así se distingue "la cámara
+// no funciona" de "el detector no funciona".
+// ---------------------------------------------------------------------------
+function dibujar() {
+  if (video.readyState >= 2 && video.videoWidth) {
+    const ancho = video.videoWidth, alto = video.videoHeight;
+    if (lienzo.width !== ancho || lienzo.height !== alto) {
+      lienzo.width = ancho; lienzo.height = alto;
+    }
+    // Con la cámara frontal dibujamos en espejo, como un espejo real. La
+    // trasera se muestra tal cual. Los puntos que se envían NO se reflejan:
+    // el modelo se entrenó con ambas manos.
+    ctx.save();
+    if (camaraFrontal) { ctx.translate(ancho, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(video, 0, 0, ancho, alto);
+    if (ultimaMano) {
+      drawConnectors(ctx, ultimaMano, HAND_CONNECTIONS, { color: "#4c8dff", lineWidth: 3 });
+      drawLandmarks(ctx, ultimaMano, { color: "#ffffff", fillColor: "#1a7f37", lineWidth: 1, radius: 4 });
+    }
+    ctx.restore();
+  }
+  requestAnimationFrame(dibujar);
+}
+requestAnimationFrame(dibujar);
+
+// ---------------------------------------------------------------------------
+// Detección: un cuadro a la vez; el siguiente se pide cuando termina el
+// anterior. Si falla, se muestra el error en pantalla y se reintenta.
+// ---------------------------------------------------------------------------
+let detectando = false;
+async function bucleDeteccion() {
+  if (video.readyState >= 2 && video.videoWidth) {
+    try {
+      await manos.send({ image: video });
+    } catch (err) {
+      elEstado.textContent = "Falló el detector de manos: " + (err && err.message ? err.message : err);
+      console.error(err);
+      setTimeout(bucleDeteccion, 1000);
+      return;
+    }
+  }
+  requestAnimationFrame(bucleDeteccion);
+}
+
+// ---------------------------------------------------------------------------
+// Cámara. Funciona en HTTPS o en localhost, que el navegador considera seguros.
 // En el celular, "user" es la cámara frontal y "environment" la trasera.
+// ---------------------------------------------------------------------------
 let camaraFrontal = true;
-let bucleIniciado = false;
+const botonActivar = document.getElementById("activar");
 
 async function iniciarCamara() {
+  botonActivar.hidden = true;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    elEstado.textContent = "Este navegador no permite la cámara aquí (¿la página es HTTPS?)";
+    elEstado.textContent = "Este navegador no permite la cámara aquí. Abre el enlace en Chrome o Safari (no dentro de WhatsApp u otra app).";
     return;
   }
   if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  elEstado.textContent = "Abriendo cámara…";
   try {
     const flujo = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: camaraFrontal ? "user" : "environment",
@@ -332,22 +383,20 @@ async function iniciarCamara() {
     await video.play();
   } catch (err) {
     elEstado.textContent = err.name === "NotAllowedError"
-      ? "Permiso de cámara denegado: actívalo en el candado de la barra de direcciones"
-      : "No se pudo abrir la cámara (" + err.name + ")";
+      ? "Permiso de cámara denegado: actívalo en el candado de la barra de direcciones y toca «Activar cámara»"
+      : "No se pudo abrir la cámara (" + err.name + "). Toca «Activar cámara» para reintentar";
+    botonActivar.hidden = false;
     return;
   }
-  elEstado.textContent = "Cargando modelo de la mano…";
-  if (bucleIniciado) return;
-  bucleIniciado = true;
-  // Procesamos un cuadro a la vez: el siguiente se pide cuando termina el anterior.
-  const bucle = async () => {
-    try {
-      if (video.readyState >= 2) await manos.send({ image: video });
-    } catch (err) { /* un cuadro fallido no detiene el bucle */ }
-    requestAnimationFrame(bucle);
-  };
-  bucle();
+  if (!detectorListo) {
+    elEstado.textContent = "Cámara lista. Cargando el detector de manos (unos segundos la primera vez)…";
+  }
+  if (!detectando) {
+    detectando = true;
+    bucleDeteccion();
+  }
 }
+botonActivar.onclick = () => iniciarCamara();
 document.getElementById("cambiarCamara").onclick = () => {
   camaraFrontal = !camaraFrontal;
   iniciarCamara();
