@@ -30,6 +30,7 @@ opencv-python          # Lee imágenes y abre la webcam
 numpy<2                # Operaciones numéricas (mediapipe exige NumPy 1.x)
 
 # --- Entrenamiento y evaluación ---
+pandas>=2.2,<3          # Leer y agrupar los CSV de puntos (pandas 3 exige NumPy 2)
 scikit-learn            # División por voluntario y matriz de confusión
 matplotlib              # Guardar la matriz de confusión como imagen
 

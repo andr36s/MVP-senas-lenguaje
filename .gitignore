@@ -13,3 +13,6 @@ LSC70/LSC70W/
 # Datos propios grabados con la webcam: son datos personales (Ley 1581 de
 # 2012). No se suben al repositorio público sin consentimiento escrito.
 datos/mis_datos.csv
+
+# Configuración local de Claude Code (rutas de este computador)
+.claude/

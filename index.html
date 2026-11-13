@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Señas LSC</title>
+<!--
+  MediaPipe Hands para JavaScript (la misma familia de modelos que usamos en
+  Python para extraer los puntos del dataset). Corre DENTRO del navegador:
+  el video nunca se envía al servidor, solo 63 números por cuadro.
+-->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --fondo: #f4f5f7; --tarjeta: #ffffff; --texto: #1d2330; --suave: #5d6677;
+    --borde: #dfe3ea; --acento: #1f6feb; --ok: #1a7f37; --duda: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #0f1218; --tarjeta: #181c24; --texto: #e7eaf0; --suave: #9aa3b2;
+      --borde: #2a303b; --acento: #4c8dff; --ok: #3fb950; --duda: #d29922;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--texto);
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 16px 20px 0; max-width: 1200px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 1.4rem; }
+  header p { margin: 4px 0 0; color: var(--suave); font-size: .9rem; }
+  main {
+    display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr);
+    gap: 16px; padding: 16px 20px; max-width: 1200px; margin: 0 auto;
+  }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  .tarjeta {
+    background: var(--tarjeta); border: 1px solid var(--borde);
+    border-radius: 12px; padding: 16px;
+  }
+  .camara { position: relative; padding: 0; overflow: hidden; background: #000; }
+  canvas { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; }
+  video { display: none; }
+  #estado {
+    position: absolute; left: 12px; bottom: 12px; padding: 4px 10px;
+    border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: .85rem;
+  }
+  .panel { display: flex; flex-direction: column; gap: 16px; }
+  .etiqueta { color: var(--suave); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+  #letra {
+    font-size: 8rem; line-height: 1; font-weight: 700; text-align: center;
+    min-height: 8rem; margin: 8px 0;
+  }
+  #letra.duda { font-size: 1.6rem; color: var(--duda); line-height: 8rem; font-weight: 600; }
+  .barra { height: 10px; background: var(--borde); border-radius: 999px; overflow: hidden; }
+  .barra > div { height: 100%; width: 0; background: var(--acento); transition: width .1s linear; }
+  #barraMantener > div { background: var(--ok); transition: none; }
+  .fila { display: flex; justify-content: space-between; font-size: .9rem; margin-top: 6px; color: var(--suave); }
+  #palabra {
+    min-height: 3.2rem; font-size: 2rem; font-weight: 600; letter-spacing: .08em;
+    word-break: break-all; padding: 8px 12px; border: 1px dashed var(--borde);
+    border-radius: 8px; white-space: pre-wrap;
+  }
+  .botones { display: flex; gap: 8px; margin-top: 12px; }
+  button {
+    flex: 1; padding: 12px; font-size: 1rem; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--borde); background: var(--fondo); color: var(--texto);
+  }
+  button:hover { border-color: var(--acento); }
+  button:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+  #letras { font-size: .85rem; color: var(--suave); margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Señas LSC: reconocimiento del abecedario</h1>
+  <p>Haz una letra frente a la cámara. Si la mantienes 1 segundo, se agrega a la palabra.
+     El video se procesa en tu navegador: al servidor solo llegan los 21 puntos de la mano.</p>
+</header>
+<main>
+  <section class="tarjeta camara">
+    <video id="video" playsinline></video>
+    <canvas id="lienzo" width="640" height="480" aria-label="Cámara con los puntos de la mano"></canvas>
+    <div id="estado">Iniciando cámara…</div>
+  </section>
+
+  <section class="panel">
+    <div class="tarjeta">
+      <div class="etiqueta">Letra detectada</div>
+      <div id="letra" aria-live="polite">–</div>
+      <div class="etiqueta">Confianza</div>
+      <div class="barra" id="barraConfianza"><div></div></div>
+      <div class="fila"><span id="confianza">–</span><span>mínimo 70 %</span></div>
+      <div class="etiqueta" style="margin-top:12px">Mantén la letra</div>
+      <div class="barra" id="barraMantener"><div></div></div>
+    </div>
+
+    <div class="tarjeta">
+      <div class="etiqueta">Palabra</div>
+      <div id="palabra" aria-live="polite"></div>
+      <div class="botones">
+        <button id="espacio" type="button">Espacio</button>
+        <button id="borrar" type="button">Borrar</button>
+      </div>
+    </div>
+
+    <p id="letras"></p>
+  </section>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Parámetros
+// ---------------------------------------------------------------------------
+const TIEMPO_MANTENER_MS = 1000;  // una letra se agrega si se mantiene 1 s
+const INTERVALO_ENVIO_MS = 100;   // máximo ~10 consultas por segundo
+
+const video = document.getElementById("video");
+const lienzo = document.getElementById("lienzo");
+const ctx = lienzo.getContext("2d");
+const elEstado = document.getElementById("estado");
+const elLetra = document.getElementById("letra");
+const elConfianza = document.getElementById("confianza");
+const barraConfianza = document.querySelector("#barraConfianza > div");
+const barraMantener = document.querySelector("#barraMantener > div");
+const elPalabra = document.getElementById("palabra");
+
+let palabra = "";
+let candidata = null;     // letra que se está manteniendo
+let desde = 0;            // desde cuándo se mantiene
+let yaAgregada = false;   // para no repetir la letra mientras se sostiene
+let enviando = false;
+let ultimoEnvio = 0;
+
+// ---------------------------------------------------------------------------
+// Palabra: botones y teclado
+// ---------------------------------------------------------------------------
+function mostrarPalabra() { elPalabra.textContent = palabra; }
+document.getElementById("espacio").onclick = () => { palabra += " "; mostrarPalabra(); };
+document.getElementById("borrar").onclick = () => { palabra = palabra.slice(0, -1); mostrarPalabra(); };
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "BUTTON" && (e.key === " " || e.key === "Enter")) return;
+  if (e.key === " ") { e.preventDefault(); palabra += " "; mostrarPalabra(); }
+  if (e.key === "Backspace") { e.preventDefault(); palabra = palabra.slice(0, -1); mostrarPalabra(); }
+});
+
+// ---------------------------------------------------------------------------
+// Lógica de "mantener 1 segundo"
+// ---------------------------------------------------------------------------
+function actualizarMantener(letra) {
+  const ahora = performance.now();
+  if (letra !== candidata) {           // cambió la letra: reiniciar el conteo
+    candidata = letra;
+    desde = ahora;
+    yaAgregada = false;
+  }
+  if (candidata === null) { barraMantener.style.width = "0"; return; }
+  const avance = Math.min(1, (ahora - desde) / TIEMPO_MANTENER_MS);
+  barraMantener.style.width = (yaAgregada ? 100 : avance * 100) + "%";
+  if (avance >= 1 && !yaAgregada) {
+    palabra += candidata;
+    yaAgregada = true;                 // para repetirla hay que cambiar de letra
+    mostrarPalabra();
+  }
+}
+
+function mostrarPrediccion(r) {
+  if (!r) {
+    elLetra.textContent = "–"; elLetra.className = "";
+    elConfianza.textContent = "–"; barraConfianza.style.width = "0";
+    actualizarMantener(null);
+    return;
+  }
+  const pct = Math.round(r.confianza * 100);
+  elConfianza.textContent = pct + " %";
+  barraConfianza.style.width = pct + "%";
+  if (r.letra) {
+    elLetra.textContent = r.letra; elLetra.className = "";
+  } else {
+    elLetra.textContent = "No estoy seguro"; elLetra.className = "duda";
+  }
+  actualizarMantener(r.letra);
+}
+
+// ---------------------------------------------------------------------------
+// Consulta al servidor: solo 63 números
+// ---------------------------------------------------------------------------
+async function consultar(landmarks, ancho, alto) {
+  enviando = true;
+  ultimoEnvio = performance.now();
+  // Igual que landmarks_a_pixeles() en comun.py: x e y en píxeles, z en la
+  // escala de x. El servidor hace el resto de la normalización.
+  const puntos = landmarks.flatMap(p => [p.x * ancho, p.y * alto, p.z * ancho]);
+  try {
+    const resp = await fetch("/predecir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ puntos }),
+    });
+    if (resp.ok) {
+      mostrarPrediccion(await resp.json());
+      elEstado.textContent = "Mano detectada";
+    } else {
+      elEstado.textContent = "El servidor rechazó los datos (" + resp.status + ")";
+    }
+  } catch (err) {
+    elEstado.textContent = "Sin conexión con el servidor";
+  } finally {
+    enviando = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MediaPipe Hands en el navegador
+// ---------------------------------------------------------------------------
+const manos = new Hands({
+  locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`,
+});
+manos.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,           // el mismo que usamos al extraer el dataset
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.5,
+});
+
+manos.onResults((res) => {
+  const ancho = res.image.width, alto = res.image.height;
+  if (lienzo.width !== ancho) { lienzo.width = ancho; lienzo.height = alto; }
+
+  // Dibujamos en espejo para que se sienta como un espejo. Los puntos que se
+  // envían NO se reflejan: el modelo se entrenó con ambas manos.
+  ctx.save();
+  ctx.translate(ancho, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(res.image, 0, 0, ancho, alto);
+  const lm = res.multiHandLandmarks && res.multiHandLandmarks[0];
+  if (lm) {
+    drawConnectors(ctx, lm, HAND_CONNECTIONS, { color: "#4c8dff", lineWidth: 3 });
+    drawLandmarks(ctx, lm, { color: "#ffffff", fillColor: "#1a7f37", lineWidth: 1, radius: 4 });
+  }
+  ctx.restore();
+
+  if (!lm) {
+    elEstado.textContent = "Muestra la mano a la cámara";
+    mostrarPrediccion(null);
+    return;
+  }
+  if (!enviando && performance.now() - ultimoEnvio >= INTERVALO_ENVIO_MS) {
+    consultar(lm, ancho, alto);
+  }
+});
+
+// Abrimos la cámara con la API estándar del navegador. Funciona en
+// http://127.0.0.1 o localhost porque el navegador los considera seguros.
+async function iniciarCamara() {
+  try {
+    const flujo = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480 }, audio: false,
+    });
+    video.srcObject = flujo;
+    await video.play();
+  } catch (err) {
+    elEstado.textContent = err.name === "NotAllowedError"
+      ? "Permiso de cámara denegado: actívalo en el candado de la barra de direcciones"
+      : "No se pudo abrir la cámara (" + err.name + ")";
+    return;
+  }
+  elEstado.textContent = "Cargando modelo de la mano…";
+  // Procesamos un cuadro a la vez: el siguiente se pide cuando termina el anterior.
+  const bucle = async () => {
+    if (video.readyState >= 2) await manos.send({ image: video });
+    requestAnimationFrame(bucle);
+  };
+  bucle();
+}
+iniciarCamara();
+
+// Letras que conoce el modelo
+fetch("/salud").then(r => r.json()).then(s => {
+  document.getElementById("letras").textContent =
+    "Letras que reconoce: " + s.letras.join(" ") + ". (G, H, J, Ñ, S y Z se hacen con movimiento y no se incluyen en esta versión.)";
+}).catch(() => {});
+</script>
+</body>
+</html>
