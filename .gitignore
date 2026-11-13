@@ -1,0 +1,15 @@
+# Entorno virtual: se recrea con requirements.txt, no se sube.
+venv/
+__pycache__/
+*.pyc
+
+# Partes del dataset LSC70 que el proyecto NO usa (~900 MB).
+# Solo subimos LSC70ANH (recortes de la mano, 62 MB).
+# Las demás se descargan del enlace del dataset si se necesitan.
+LSC70/LSC70AN/
+LSC70/LSC70W/
+*.zip
+
+# Datos propios grabados con la webcam: son datos personales (Ley 1581 de
+# 2012). No se suben al repositorio público sin consentimiento escrito.
+datos/mis_datos.csv

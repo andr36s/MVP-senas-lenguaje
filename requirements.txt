@@ -1,0 +1,38 @@
+# Dependencias del MVP "Señas" (reconocimiento del abecedario LSC)
+# Probado en Windows con Python 3.12.
+#
+# IMPORTANTE (Windows): la carpeta del proyecto NO puede tener letras con tilde
+# o ñ en la ruta (ej. "Andrés"). MediaPipe es una librería compilada en C++ y
+# tiene un bug conocido: no encuentra sus archivos internos si la ruta tiene
+# caracteres no-ASCII, y falla con "FileNotFoundError" aunque el archivo sí
+# exista. La solución no es mover la carpeta: Windows ya genera una "ruta
+# corta" sin tildes para cada carpeta (ej. C:\Users\ANDRS~1\...). Usa esa
+# ruta corta para crear el venv y correr todos los scripts de este proyecto.
+# Para saber cuál es la tuya: (ver README, sección "Ruta corta en Windows").
+#
+# Instalación (dos pasos, por el motivo de jax/ml_dtypes explicado abajo):
+#   pip install -r requirements.txt
+#   pip install --no-deps mediapipe==0.10.21
+
+# --- Modelo ---
+keras>=3.0,<4          # API de alto nivel para definir y entrenar la red (tecnología central)
+tensorflow==2.17.1     # Motor (backend) que ejecuta los cálculos de Keras 3.
+                       # Version fijada: tensorflow>=2.18 ya pide protobuf>=6,
+                       # que choca con la version de protobuf que usa mediapipe.
+
+# --- Extracción de puntos de la mano ---
+# mediapipe se instala aparte, con --no-deps (ver arriba): su version 1.x mas
+# reciente elimino la API clasica mp.solutions.hands que usamos aqui, y su
+# lista normal de dependencias incluye jax/jaxlib, que no usamos para nada
+# y que entran en conflicto con la version de ml_dtypes que exige tensorflow.
+# mediapipe==0.10.21   # (ver instrucción de instalación arriba)
+opencv-python          # Lee imágenes y abre la webcam
+numpy<2                # Operaciones numéricas (mediapipe exige NumPy 1.x)
+
+# --- Entrenamiento y evaluación ---
+scikit-learn            # División por voluntario y matriz de confusión
+matplotlib              # Guardar la matriz de confusión como imagen
+
+# --- Servidor web ---
+fastapi                 # API con el endpoint POST /predecir
+uvicorn                 # Servidor que ejecuta la app FastAPI
