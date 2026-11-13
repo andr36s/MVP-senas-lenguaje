@@ -61,6 +61,9 @@ Las letras G, H, J, Ñ, S y Z se hacen con movimiento y quedan fuera
 | `api.py` | 5 | Servidor FastAPI: `POST /predecir`, `GET /salud`, la página |
 | `index.html` | 6 | Interfaz: cámara, mano dibujada, letra, confianza y palabra |
 | `iniciar_windows.bat` | 7 | Arranque con doble clic |
+| `exportar_web.py` | extra | Exporta los pesos de la red a `docs/` para usarla sin servidor |
+| `docs/` | extra | Versión estática para GitHub Pages (probar desde el celular) |
+| `servidor_celular.py`, `iniciar_celular.bat` | extra | Servir la app por HTTPS en la Wi-Fi de la casa |
 | `LSC70/LSC70ANH/` | — | Imágenes del dataset (ver [cita](#10-dataset-y-cita)) |
 
 ## 3. Cómo ejecutarlo
@@ -73,6 +76,43 @@ Las letras G, H, J, Ñ, S y Z se hacen con movimiento y quedan fuera
 3. Permite el acceso a la cámara y haz una letra. Si la mantienes 1 segundo,
    se agrega a la palabra. Los botones **Espacio** y **Borrar** (o las teclas
    espacio y retroceso) editan la palabra.
+
+### Probar desde el celular
+
+Los navegadores de celular solo permiten la cámara en páginas **HTTPS**. Hay
+dos formas:
+
+**A. Desde cualquier lugar: GitHub Pages (sin servidor).** La carpeta `docs/`
+tiene la misma `index.html` y un `modelo.json` con los pesos de la red Keras.
+Cuando la página encuentra ese archivo, hace la predicción dentro del
+celular con JavaScript: son 3 capas Dense, o sea, multiplicar matrices
+(`y = activación(x · W + b)`). Así no hace falta servidor, el computador puede
+estar apagado y ningún dato sale del celular. Se verificó que da **la misma
+letra que Keras en las 1.384 muestras de prueba** (diferencia máxima de
+probabilidad 0,0000085, solo redondeo) y tarda 0,08 ms por predicción.
+
+Para activarlo (una sola vez): en GitHub, *Settings → Pages → Build and
+deployment → Source: Deploy from a branch → Branch: `main`, carpeta `/docs`
+→ Save*. En 1–2 minutos queda en
+`https://andr36s.github.io/MVP-senas-lenguaje/`. Si se vuelve a entrenar el
+modelo, hay que actualizar `docs/`:
+
+```bash
+venv\Scripts\python exportar_web.py
+```
+
+*Por qué no un túnel hacia el computador:* servicios como ngrok o
+localhost.run dan una dirección HTTPS pública, pero abren una entrada desde
+internet hacia el computador. Para una demostración, una página estática es
+más segura y no cuesta nada.
+
+**B. En la misma Wi-Fi: `iniciar_celular.bat`.** Sirve la versión con FastAPI
+por HTTPS en `https://<IP del computador>:8443`, con un certificado
+autofirmado que se crea solo (el celular mostrará una advertencia que hay que
+aceptar una vez). Escucha en toda la red local, así que úsalo solo en redes
+de confianza. Si Windows tiene la red marcada como "Pública", el firewall
+bloqueará la conexión: márcala como "Privada" o permite Python cuando Windows
+lo pregunte.
 
 ### Instalación (Windows, Python 3.12)
 
@@ -203,7 +243,7 @@ cambiar de pose o retirar la mano entre una y otra.
 | **Uso local (este MVP)** | **$0**: corre en el computador del usuario, sin GPU ni internet (salvo para descargar MediaPipe JS la primera vez desde el CDN jsDelivr). |
 | Entrenamiento | $0: menos de 1 minuto en CPU. La extracción de puntos tarda ~8 minutos. |
 | Publicarlo en internet | Bastaría un servidor virtual pequeño de CPU, de los planes más baratos de cualquier proveedor. El modelo pesa 70 KB y cada predicción tarda ~6 ms. El video no se procesa en el servidor, así que el ancho de banda es mínimo (unos cientos de bytes por consulta). Habría que sumar un dominio y HTTPS: la cámara solo funciona en `localhost` o con HTTPS. |
-| Alternativa sin servidor | Convertir el modelo a TensorFlow.js y correrlo en el navegador: costo de servidor $0 y ningún dato sale del dispositivo. |
+| Sin servidor (implementado en `docs/`) | GitHub Pages es gratis para repositorios públicos y da HTTPS. La red corre en el navegador con sus pesos exportados a JSON (181 KB): costo de servidor $0 y ningún dato sale del dispositivo. |
 
 ## 7. Ley 1581 de 2012 y consentimiento
 
@@ -286,7 +326,8 @@ Cómo lo aplica este proyecto:
 6. **Coherencia entre Python y el navegador.** Se pasaron fotos de prueba por
    MediaPipe en JavaScript y en Python: los puntos coinciden (diferencia
    máxima de 0,1 tamaños de palma) y las 4 letras probadas salieron correctas
-   con 96–99 % de confianza.
+   con 96–99 % de confianza. La versión sin servidor (red calculada en
+   JavaScript) da la misma letra que Keras en las 1.384 muestras de prueba.
 7. **Reproducibilidad.** La semilla es fija y la lista de voluntarios de cada
    grupo queda guardada en `resultados/metricas.json`.
 

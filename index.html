@@ -40,11 +40,18 @@
     border-radius: 12px; padding: 16px;
   }
   .camara { position: relative; padding: 0; overflow: hidden; background: #000; }
-  canvas { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; }
+  /* Sin proporción fija: en el celular vertical la cámara entrega video
+     vertical. max-height evita que tape la letra en pantallas pequeñas. */
+  canvas { display: block; width: 100%; height: auto; max-height: 62vh; object-fit: contain; }
+  #cambiarCamara {
+    position: absolute; right: 12px; bottom: 12px; flex: none; padding: 6px 12px;
+    font-size: .85rem; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; border: none;
+  }
   video { display: none; }
   #estado {
     position: absolute; left: 12px; bottom: 12px; padding: 4px 10px;
     border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: .85rem;
+    max-width: calc(100% - 160px);  /* no tapar el botón "Cambiar cámara" */
   }
   .panel { display: flex; flex-direction: column; gap: 16px; }
   .etiqueta { color: var(--suave); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
@@ -76,13 +83,14 @@
 <header>
   <h1>Señas LSC: reconocimiento del abecedario</h1>
   <p>Haz una letra frente a la cámara. Si la mantienes 1 segundo, se agrega a la palabra.
-     El video se procesa en tu navegador: al servidor solo llegan los 21 puntos de la mano.</p>
+     <span id="privacidad">El video se procesa en tu navegador: al servidor solo llegan los 21 puntos de la mano.</span></p>
 </header>
 <main>
   <section class="tarjeta camara">
     <video id="video" playsinline></video>
     <canvas id="lienzo" width="640" height="480" aria-label="Cámara con los puntos de la mano"></canvas>
     <div id="estado">Iniciando cámara…</div>
+    <button id="cambiarCamara" type="button">Cambiar cámara</button>
   </section>
 
   <section class="panel">
@@ -184,15 +192,66 @@ function mostrarPrediccion(r) {
 }
 
 // ---------------------------------------------------------------------------
-// Consulta al servidor: solo 63 números
+// Dos modos de predecir:
+//  - Con servidor (api.py): se envían 63 números a POST /predecir.
+//  - Sin servidor (GitHub Pages): si hay un modelo.json junto a esta página
+//    (lo genera exportar_web.py con los pesos de la red Keras), la red se
+//    calcula aquí mismo y ningún dato sale del dispositivo.
 // ---------------------------------------------------------------------------
+let modeloLocal = null;
+
+// Copia de normalizar_puntos() de comun.py. Solo se usa en el modo sin
+// servidor; en el modo con servidor normaliza Python.
+function normalizarPuntos(puntos) {
+  const mx = puntos[0], my = puntos[1], mz = puntos[2];      // muñeca (punto 0)
+  const rel = puntos.map((v, i) => v - [mx, my, mz][i % 3]);
+  const tamano = Math.hypot(rel[27], rel[28], rel[29]);       // nudillo dedo medio (punto 9)
+  if (tamano < 1e-6) return null;
+  return rel.map(v => v / tamano);
+}
+
+// Red Dense: y = activación(x · W + b), capa por capa (igual que Keras).
+function predecirLocal(puntos) {
+  let x = normalizarPuntos(puntos);
+  if (!x) return null;
+  for (const capa of modeloLocal.capas) {
+    const y = capa.b.slice();
+    for (let i = 0; i < x.length; i++) {
+      const xi = x[i], fila = capa.W[i];
+      for (let j = 0; j < y.length; j++) y[j] += xi * fila[j];
+    }
+    if (capa.activacion === "relu") {
+      x = y.map(v => Math.max(0, v));
+    } else if (capa.activacion === "softmax") {
+      const max = Math.max(...y);
+      const e = y.map(v => Math.exp(v - max));
+      const suma = e.reduce((a, b) => a + b, 0);
+      x = e.map(v => v / suma);
+    } else {
+      x = y;
+    }
+  }
+  let i = 0;
+  for (let k = 1; k < x.length; k++) if (x[k] > x[i]) i = k;
+  const confianza = x[i];
+  if (confianza < modeloLocal.umbral_confianza) {
+    return { letra: null, confianza, mensaje: "No estoy seguro" };
+  }
+  return { letra: modeloLocal.letras[i], confianza, mensaje: modeloLocal.letras[i] };
+}
+
 async function consultar(landmarks, ancho, alto) {
   enviando = true;
   ultimoEnvio = performance.now();
   // Igual que landmarks_a_pixeles() en comun.py: x e y en píxeles, z en la
-  // escala de x. El servidor hace el resto de la normalización.
+  // escala de x. El resto de la normalización la hace normalizarPuntos().
   const puntos = landmarks.flatMap(p => [p.x * ancho, p.y * alto, p.z * ancho]);
   try {
+    if (modeloLocal) {
+      const r = predecirLocal(puntos);
+      if (r) { mostrarPrediccion(r); elEstado.textContent = "Mano detectada"; }
+      return;
+    }
     const resp = await fetch("/predecir", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -228,11 +287,11 @@ manos.onResults((res) => {
   const ancho = res.image.width, alto = res.image.height;
   if (lienzo.width !== ancho) { lienzo.width = ancho; lienzo.height = alto; }
 
-  // Dibujamos en espejo para que se sienta como un espejo. Los puntos que se
-  // envían NO se reflejan: el modelo se entrenó con ambas manos.
+  // Con la cámara frontal dibujamos en espejo, como un espejo real. La
+  // trasera se muestra tal cual. Los puntos que se envían NO se reflejan:
+  // el modelo se entrenó con ambas manos.
   ctx.save();
-  ctx.translate(ancho, 0);
-  ctx.scale(-1, 1);
+  if (camaraFrontal) { ctx.translate(ancho, 0); ctx.scale(-1, 1); }
   ctx.drawImage(res.image, 0, 0, ancho, alto);
   const lm = res.multiHandLandmarks && res.multiHandLandmarks[0];
   if (lm) {
@@ -253,10 +312,21 @@ manos.onResults((res) => {
 
 // Abrimos la cámara con la API estándar del navegador. Funciona en
 // http://127.0.0.1 o localhost porque el navegador los considera seguros.
+// En el celular, "user" es la cámara frontal y "environment" la trasera.
+let camaraFrontal = true;
+let bucleIniciado = false;
+
 async function iniciarCamara() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    elEstado.textContent = "Este navegador no permite la cámara aquí (¿la página es HTTPS?)";
+    return;
+  }
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
   try {
     const flujo = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480 }, audio: false,
+      video: { facingMode: camaraFrontal ? "user" : "environment",
+               width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
     });
     video.srcObject = flujo;
     await video.play();
@@ -267,20 +337,41 @@ async function iniciarCamara() {
     return;
   }
   elEstado.textContent = "Cargando modelo de la mano…";
+  if (bucleIniciado) return;
+  bucleIniciado = true;
   // Procesamos un cuadro a la vez: el siguiente se pide cuando termina el anterior.
   const bucle = async () => {
-    if (video.readyState >= 2) await manos.send({ image: video });
+    try {
+      if (video.readyState >= 2) await manos.send({ image: video });
+    } catch (err) { /* un cuadro fallido no detiene el bucle */ }
     requestAnimationFrame(bucle);
   };
   bucle();
 }
+document.getElementById("cambiarCamara").onclick = () => {
+  camaraFrontal = !camaraFrontal;
+  iniciarCamara();
+};
 iniciarCamara();
 
-// Letras que conoce el modelo
-fetch("/salud").then(r => r.json()).then(s => {
+// Elegir el modo y mostrar las letras que conoce el modelo
+function mostrarLetras(letras) {
   document.getElementById("letras").textContent =
-    "Letras que reconoce: " + s.letras.join(" ") + ". (G, H, J, Ñ, S y Z se hacen con movimiento y no se incluyen en esta versión.)";
-}).catch(() => {});
+    "Letras que reconoce: " + letras.join(" ") + ". (G, H, J, Ñ, S y Z se hacen con movimiento y no se incluyen en esta versión.)";
+}
+(async () => {
+  try {
+    const r = await fetch("modelo.json");
+    if (r.ok) {
+      modeloLocal = await r.json();
+      mostrarLetras(modeloLocal.letras);
+      document.getElementById("privacidad").textContent =
+        "Todo se procesa en este dispositivo: ni el video ni los puntos de la mano se envían a ningún servidor.";
+      return;
+    }
+  } catch (err) { /* sin modelo.json: modo con servidor */ }
+  fetch("/salud").then(r => r.json()).then(s => mostrarLetras(s.letras)).catch(() => {});
+})();
 </script>
 </body>
 </html>

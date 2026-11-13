@@ -16,3 +16,6 @@ datos/mis_datos.csv
 
 # Configuración local de Claude Code (rutas de este computador)
 .claude/
+
+# Certificado HTTPS autofirmado para pruebas en el celular (incluye llave privada)
+certificados/
